@@ -1,0 +1,148 @@
+name: Update Vietnam IP Lists by City
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-ip-lists:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install requests
+          
+      - name: Download and process IP data
+        run: |
+          python << 'EOF'
+          import requests
+          import gzip
+          from collections import defaultdict
+          import ipaddress
+          import unicodedata
+          import re
+          
+          def normalize_city_name(city):
+              """Chuyển tên thành phố về dạng chữ thường, bỏ dấu, bỏ khoảng trắng"""
+              if not city or city == 'Unknown':
+                  return 'unknown'
+              
+              # Bỏ dấu tiếng Việt
+              city = unicodedata.normalize('NFD', city)
+              city = ''.join(char for char in city if unicodedata.category(char) != 'Mn')
+              
+              # Chuyển thường, bỏ khoảng trắng và ký tự đặc biệt
+              city = city.lower()
+              city = re.sub(r'[^a-z0-9]', '', city)
+              
+              return city if city else 'unknown'
+          
+          print("Đang tải DB-IP City Lite database...")
+          url = "https://download.db-ip.com/free/dbip-city-lite-2025-12.csv.gz"
+          response = requests.get(url)
+          
+          print("Đang giải nén và xử lý dữ liệu...")
+          content = gzip.decompress(response.content).decode('utf-8')
+          
+          city_ips = defaultdict(list)
+          vietnam_networks = []
+          
+          lines = content.strip().split('\n')
+          print(f"Tổng số dòng: {len(lines)}")
+          
+          processed = 0
+          vn_count = 0
+          
+          for line in lines:
+              try:
+                  # Split bằng dấu phẩy (CSV)
+                  parts = line.split(',')
+                  
+                  if len(parts) >= 4:
+                      country_code = parts[3]
+                      
+                      if country_code == 'VN':
+                          vn_count += 1
+                          
+                          if len(parts) >= 5:
+                              ip_start = parts[0]
+                              ip_end = parts[1]
+                              region = parts[4]
+                              
+                              # Convert IP range to CIDR networks
+                              try:
+                                  start_ip = ipaddress.IPv4Address(ip_start)
+                                  end_ip = ipaddress.IPv4Address(ip_end)
+                                  
+                                  # Tạo CIDR từ range
+                                  cidrs = list(ipaddress.summarize_address_range(start_ip, end_ip))
+                                  
+                                  # Chuẩn hóa tên thành phố
+                                  city_normalized = normalize_city_name(region)
+                                  
+                                  # Thêm vào danh sách
+                                  for cidr in cidrs:
+                                      network_str = str(cidr)
+                                      city_ips[city_normalized].append(network_str)
+                                      vietnam_networks.append(network_str)
+                                  
+                                  processed += 1
+                                  if processed % 1000 == 0:
+                                      print(f"Đã xử lý {processed} dải IP VN...")
+                                      
+                              except (ipaddress.AddressValueError, ValueError):
+                                  # Skip IPv6 or invalid IPs
+                                  continue
+                          
+              except Exception as e:
+                  continue
+          
+          print(f"\n=== THỐNG KÊ ===")
+          print(f"Tổng dòng VN tìm thấy: {vn_count}")
+          print(f"Tổng networks IPv4 VN: {len(vietnam_networks)}")
+          print(f"Số thành phố/tỉnh: {len(city_ips)}")
+          
+          # Lưu file vietnam.txt (tất cả networks)
+          unique_all = sorted(set(vietnam_networks))
+          with open('vietnam.txt', 'w') as f:
+              for network in unique_all:
+                  f.write(network + '\n')
+          print(f"\nĐã lưu vietnam.txt với {len(unique_all)} networks")
+          
+          # Lưu file cho từng thành phố
+          if city_ips:
+              print("\nĐang tạo file cho từng thành phố...")
+              for city, networks in sorted(city_ips.items()):
+                  filename = f"{city}.txt"
+                  unique_networks = sorted(set(networks))
+                  with open(filename, 'w') as f:
+                      for network in unique_networks:
+                          f.write(network + '\n')
+                  print(f"Đã tạo {filename} với {len(unique_networks)} networks")
+              
+              print("\n=== Top 10 thành phố có nhiều networks nhất ===")
+              sorted_cities = sorted(city_ips.items(), key=lambda x: len(set(x[1])), reverse=True)[:10]
+              for city, networks in sorted_cities:
+                  print(f"{city}: {len(set(networks))} networks")
+          
+          print("\nHoàn thành!")
+          EOF
+          
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add *.txt
+          git commit -m "Update Vietnam IP lists [$(date +'%Y-%m-%d')]" || exit 0
+          git push
