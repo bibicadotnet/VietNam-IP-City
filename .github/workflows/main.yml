@@ -47,8 +47,8 @@ jobs:
               city = re.sub(r'[^a-z0-9]', '', city)
               
               return city if city else 'unknown'
-          
-          # Phân loại các tỉnh/thành phố theo miền
+
+          # Phân loại các tỉnh/thành phố theo miền (threshold: 17.5/13.5)
           MIEN_BAC = {
               'hanoi', 'haiphong', 'quangninh', 'bacninh', 'hanam', 'haduong',
               'hungyen', 'hungyenprovince', 'namdinh', 'thaibinh', 'thaibinhprovince',
@@ -56,15 +56,19 @@ jobs:
               'langson', 'langsonprovince', 'caobang', 'caobangprovince',
               'hagiang', 'tuyenquang', 'yenbai', 'laocai', 'laichau',
               'laichauprovince', 'dienbien', 'ienbienprovince', 'sonla',
-              'sonlaprovince', 'hoabinh'
+              'sonlaprovince', 'hoabinh',
+              # THÊM: lat >= 17.5
+              'thanhhoa', 'thanhhoaprovince', 'nghean', 'ngheanprovince',
+              'hatinh', 'hatinhprovince', 'quangbinh'
           }
           
           MIEN_TRUNG = {
-              'thanhhoa', 'thanhhoaprovince', 'nghean', 'ngheanprovince',
-              'hatinh', 'hatinhprovince', 'quangbinh', 'quangtri',
-              'thuathienhue', 'thuathienhueprovince', 'danang', 'danangcity',
-              'quangnam', 'quangngai', 'binhdinh', 'phuyen', 'khanhhoa',
-              'khanhhoaprovince', 'nhatrang', 'ninhthuan', 'binhthuan'
+              # XÓA: thanhhoa, nghean, hatinh, quangbinh (chuyển lên BAC)
+              # XÓA: phuyen, khanhhoa, nhatrang, ninhthuan, binhthuan (chuyển xuống NAM)
+              'quangtri', 'thuathienhue', 'thuathienhueprovince', 'danang', 'danangcity',
+              'quangnam', 'quangngai', 'binhdinh',
+              # THÊM từ NAM: lat >= 13.5
+              'gialai', 'kontum'
           }
           
           MIEN_NAM = {
@@ -73,7 +77,11 @@ jobs:
               'bentre', 'travinh', 'vinhlong', 'dongthap', 'angiang',
               'kiengiang', 'cantho', 'canthocity', 'haugiang', 'soctrang',
               'soctrangprovince', 'baclieu', 'camau', 'daklak', 'aklak',
-              'daknong', 'gialai', 'kontum', 'lamdong'
+              'daknong', 'lamdong',
+              # XÓA: gialai, kontum (chuyển lên TRUNG)
+              # THÊM từ TRUNG: lat < 13.5
+              'phuyen', 'khanhhoa', 'khanhhoaprovince', 'nhatrang', 
+              'ninhthuan', 'binhthuan'
           }
           
           print("Đang tải DB-IP City Lite database...")
