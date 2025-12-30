@@ -1,123 +1,147 @@
-import requests
-import gzip
-from collections import defaultdict
-import ipaddress
-import unicodedata
-import re
+name: Update Vietnam IP Lists by City
 
-def normalize_city_name(city):
-    if not city or city == 'Unknown':
-        return 'unknown'
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-ip-lists:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     
-    city = unicodedata.normalize('NFD', city)
-    city = ''.join(char for char in city if unicodedata.category(char) != 'Mn')
-    city = city.lower()
-    city = re.sub(r'[^a-z0-9]', '', city)
-    
-    return city if city else 'unknown'
-
-def split_to_24(cidr_str):
-    """Tách CIDR thành các subnet /24"""
-    network = ipaddress.IPv4Network(cidr_str, strict=False)
-    
-    if network.prefixlen >= 24:
-        return [str(network.supernet(new_prefix=24))]
-    else:
-        return [str(subnet) for subnet in network.subnets(new_prefix=24)]
-
-MIEN_BAC = {
-    'hanoi', 'haiphong', 'quangninh', 'bacninh', 'hanam', 'haduong',
-    'hungyen', 'hungyenprovince', 'namdinh', 'thaibinh', 'thaibinhprovince',
-    'ninhbinh', 'vinhphuc', 'bacgiang', 'phutho', 'thainguyen',
-    'langson', 'langsonprovince', 'caobang', 'caobangprovince',
-    'hagiang', 'tuyenquang', 'yenbai', 'laocai', 'laichau',
-    'laichauprovince', 'dienbien', 'ienbienprovince', 'sonla',
-    'sonlaprovince', 'hoabinh',
-    'thanhhoa', 'thanhhoaprovince', 'nghean', 'ngheanprovince',
-    'hatinh', 'hatinhprovince', 'quangbinh'
-}
-
-MIEN_TRUNG = {
-    'quangtri', 'thuathienhue', 'thuathienhueprovince', 'danang', 'danangcity',
-    'quangnam', 'quangngai', 'binhdinh',
-    'gialai', 'kontum'
-}
-
-MIEN_NAM = {
-    'hochiminh', 'hochiminhcityhcmc', 'binhduong', 'dongnai',
-    'bariavungtau', 'tayninh', 'binhphuoc', 'longan', 'tiengiang',
-    'bentre', 'travinh', 'vinhlong', 'dongthap', 'angiang',
-    'kiengiang', 'cantho', 'canthocity', 'haugiang', 'soctrang',
-    'soctrangprovince', 'baclieu', 'camau', 'daklak', 'aklak',
-    'daknong', 'lamdong',
-    'phuyen', 'khanhhoa', 'khanhhoaprovince', 'nhatrang', 
-    'ninhthuan', 'binhthuan'
-}
-
-url = "https://download.db-ip.com/free/dbip-city-lite-2025-12.csv.gz"
-response = requests.get(url)
-content = gzip.decompress(response.content).decode('utf-8')
-
-city_ips = defaultdict(list)
-vietnam_networks = []
-mien_bac_ips = []
-mien_trung_ips = []
-mien_nam_ips = []
-
-for line in content.strip().split('\n'):
-    try:
-        parts = line.split(',')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         
-        if len(parts) >= 5 and parts[3] == 'VN':
-            ip_start = parts[0]
-            ip_end = parts[1]
-            region = parts[4]
-            
-            try:
-                start_ip = ipaddress.IPv4Address(ip_start)
-                end_ip = ipaddress.IPv4Address(ip_end)
-                cidrs = list(ipaddress.summarize_address_range(start_ip, end_ip))
-                
-                city_normalized = normalize_city_name(region)
-                
-                for cidr in cidrs:
-                    subnets_24 = split_to_24(str(cidr))
-                    
-                    for subnet in subnets_24:
-                        city_ips[city_normalized].append(subnet)
-                        vietnam_networks.append(subnet)
-                        
-                        if city_normalized in MIEN_BAC:
-                            mien_bac_ips.append(subnet)
-                        elif city_normalized in MIEN_TRUNG:
-                            mien_trung_ips.append(subnet)
-                        elif city_normalized in MIEN_NAM:
-                            mien_nam_ips.append(subnet)
-                        
-            except (ipaddress.AddressValueError, ValueError):
-                continue
-                    
-    except Exception:
-        continue
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install requests
+          
+      - name: Download and process IP data
+        run: |
+          python << 'EOF'
+          import requests
+          import gzip
+          from collections import defaultdict
+          import ipaddress
+          import unicodedata
+          import re
+          
+          def normalize_city_name(city):
+              if not city or city == 'Unknown':
+                  return 'unknown'
+              city = unicodedata.normalize('NFD', city)
+              city = ''.join(char for char in city if unicodedata.category(char) != 'Mn')
+              city = city.lower()
+              city = re.sub(r'[^a-z0-9]', '', city)
+              return city if city else 'unknown'
 
-with open('vietnam.txt', 'w') as f:
-    for network in sorted(set(vietnam_networks)):
-        f.write(network + '\n')
+          def split_to_24(cidr_str):
+              network = ipaddress.IPv4Network(cidr_str, strict=False)
+              if network.prefixlen >= 24:
+                  return [str(network.supernet(new_prefix=24))]
+              else:
+                  return [str(subnet) for subnet in network.subnets(new_prefix=24)]
 
-with open('mien_bac.txt', 'w') as f:
-    for network in sorted(set(mien_bac_ips)):
-        f.write(network + '\n')
-
-with open('mien_trung.txt', 'w') as f:
-    for network in sorted(set(mien_trung_ips)):
-        f.write(network + '\n')
-
-with open('mien_nam.txt', 'w') as f:
-    for network in sorted(set(mien_nam_ips)):
-        f.write(network + '\n')
-
-for city, networks in sorted(city_ips.items()):
-    filename = f"{city}.txt"
-    with open(filename, 'w') as f:
-        for network in sorted(set(networks)):
-            f.write(network + '\n')
+          MIEN_BAC = {
+              'hanoi', 'haiphong', 'quangninh', 'bacninh', 'hanam', 'haduong',
+              'hungyen', 'hungyenprovince', 'namdinh', 'thaibinh', 'thaibinhprovince',
+              'ninhbinh', 'vinhphuc', 'bacgiang', 'phutho', 'thainguyen',
+              'langson', 'langsonprovince', 'caobang', 'caobangprovince',
+              'hagiang', 'tuyenquang', 'yenbai', 'laocai', 'laichau',
+              'laichauprovince', 'dienbien', 'ienbienprovince', 'sonla',
+              'sonlaprovince', 'hoabinh',
+              'thanhhoa', 'thanhhoaprovince', 'nghean', 'ngheanprovince',
+              'hatinh', 'hatinhprovince', 'quangbinh'
+          }
+          
+          MIEN_TRUNG = {
+              'quangtri', 'thuathienhue', 'thuathienhueprovince', 'danang', 'danangcity',
+              'quangnam', 'quangngai', 'binhdinh',
+              'gialai', 'kontum'
+          }
+          
+          MIEN_NAM = {
+              'hochiminh', 'hochiminhcityhcmc', 'binhduong', 'dongnai',
+              'bariavungtau', 'tayninh', 'binhphuoc', 'longan', 'tiengiang',
+              'bentre', 'travinh', 'vinhlong', 'dongthap', 'angiang',
+              'kiengiang', 'cantho', 'canthocity', 'haugiang', 'soctrang',
+              'soctrangprovince', 'baclieu', 'camau', 'daklak', 'aklak',
+              'daknong', 'lamdong',
+              'phuyen', 'khanhhoa', 'khanhhoaprovince', 'nhatrang', 
+              'ninhthuan', 'binhthuan'
+          }
+          
+          url = "https://download.db-ip.com/free/dbip-city-lite-2025-12.csv.gz"
+          response = requests.get(url)
+          content = gzip.decompress(response.content).decode('utf-8')
+          
+          city_ips = defaultdict(list)
+          vietnam_networks = []
+          mien_bac_ips = []
+          mien_trung_ips = []
+          mien_nam_ips = []
+          
+          for line in content.strip().split('\n'):
+              try:
+                  parts = line.split(',')
+                  if len(parts) >= 5 and parts[3] == 'VN':
+                      ip_start = parts[0]
+                      ip_end = parts[1]
+                      region = parts[4]
+                      try:
+                          start_ip = ipaddress.IPv4Address(ip_start)
+                          end_ip = ipaddress.IPv4Address(ip_end)
+                          cidrs = list(ipaddress.summarize_address_range(start_ip, end_ip))
+                          city_normalized = normalize_city_name(region)
+                          for cidr in cidrs:
+                              subnets_24 = split_to_24(str(cidr))
+                              for subnet in subnets_24:
+                                  city_ips[city_normalized].append(subnet)
+                                  vietnam_networks.append(subnet)
+                                  if city_normalized in MIEN_BAC:
+                                      mien_bac_ips.append(subnet)
+                                  elif city_normalized in MIEN_TRUNG:
+                                      mien_trung_ips.append(subnet)
+                                  elif city_normalized in MIEN_NAM:
+                                      mien_nam_ips.append(subnet)
+                      except (ipaddress.AddressValueError, ValueError):
+                          continue
+              except Exception:
+                  continue
+          
+          with open('vietnam.txt', 'w') as f:
+              for network in sorted(set(vietnam_networks)):
+                  f.write(network + '\n')
+          
+          with open('mien_bac.txt', 'w') as f:
+              for network in sorted(set(mien_bac_ips)):
+                  f.write(network + '\n')
+          
+          with open('mien_trung.txt', 'w') as f:
+              for network in sorted(set(mien_trung_ips)):
+                  f.write(network + '\n')
+          
+          with open('mien_nam.txt', 'w') as f:
+              for network in sorted(set(mien_nam_ips)):
+                  f.write(network + '\n')
+          
+          for city, networks in sorted(city_ips.items()):
+              with open(f"{city}.txt", 'w') as f:
+                  for network in sorted(set(networks)):
+                      f.write(network + '\n')
+          EOF
+          
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add *.txt
+          git commit -m "Update Vietnam IP lists [$(date +'%Y-%m-%d')]" || exit 0
+          git push
